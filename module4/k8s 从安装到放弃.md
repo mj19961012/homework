@@ -98,6 +98,7 @@ cat > /etc/docker/daemon.json <<EOF
   "storage-opts": [
     "overlay2.override_kernel_check=true"
   ],
+  "insecure-registries":["172.16.49.20:5000"],
   "data-root": "/data/docker"
 }
 EOF
@@ -115,9 +116,10 @@ kubeadm init \
 --apiserver-advertise-address=172.16.39.202 \
 --image-repository registry.aliyuncs.com/google_containers \
 --kubernetes-version v1.23.4 \
---service-cidr=10.96.0.0/12 \
---pod-network-cidr=10.244.0.0/16
+--service-cidr=192.96.0.0/12,2001:db8:42:1::/112 \
+--pod-network-cidr=192.168.0.0/16,2001:db8:42:0::/56
 
+kubeadm init --pod-network-cidr=10.244.0.0/16,2001:db8:42:0::/56 --service-cidr=10.96.0.0/16,2001:db8:42:1::/112
 #podnetwork
 Run "kubectl apply -f [podnetwork].yaml" with one of the options listed at:
 https://kubernetes.io/docs/concepts/cluster-administration/addons/
@@ -156,8 +158,8 @@ export KUBECONFIG=/etc/kubernetes/admin.conf
 
 kubectl apply -f https://raw.githubusercontent.com/flannel-io/flannel/master/Documentation/kube-flannel.yml
 
-kubeadm join 172.16.39.202:6443 --token o0uknr.jws6pctxuvzsgnim \
-	--discovery-token-ca-cert-hash sha256:42a3a6ed4d2629b011bbf31da26c90830cb51e5a8e9be18126b94136a697fb0e
+kubeadm join 172.16.39.202:6443 --token djq1fd.iuun2whpgz166n4t \
+	--discovery-token-ca-cert-hash sha256:27325aa2364549db96da506015a396394d4fe100ff5559ead246d1ec8758efe2
 
 #kubeadm join 报错
 kubeadm join命令，将node加入master时，出现error execution phase preflight: couldn't validate the identity of the API Server: abort connecting to API servers after timeout
@@ -165,12 +167,11 @@ kubeadm join命令，将node加入master时，出现error execution phase prefli
 error execution phase preflight: couldn't validate the identity of the API Server: Get "https://172.16.39.202:6443/api/v1/namespaces/kube-public/configmaps/cluster-info?timeout=10s": x509: certificate has expired or is not yet valid:
 #解决：重新生成新token
 # kubeadm token create
-424mp7.nkxx07p940mkl2nd
+djq1fd.iuun2whpgz166n4t
 # openssl x509 -pubkey -in /etc/kubernetes/pki/ca.crt | openssl rsa -pubin -outform der 2>/dev/null | openssl dgst -sha256 -hex | sed 's/^.* //'
-d88fb55cb1bd659023b11e61052b39bbfe99842b0636574a16c76df186fd5e0d
-kubeadm join 192.168.169.21:6443 –token 424mp7.nkxx07p940mkl2nd \
---discovery-token-ca-cert-hash sha256:d88fb55cb1bd659023b11e61052b39bbfe99842b0636574a16c76df186fd5e0d
-
+27325aa2364549db96da506015a396394d4fe100ff5559ead246d1ec8758efe2
+kubeadm join 172.16.39.202:6443 --token djq1fd.iuun2whpgz166n4t \
+	--discovery-token-ca-cert-hash sha256:27325aa2364549db96da506015a396394d4fe100ff5559ead246d1ec8758efe2
 
 
 kubectl label nodes k8s-node1 node-role.kubernetes.io/worker=
@@ -212,5 +213,78 @@ ipvsadm -C
 kubectl delete node <node name>
 # 删除rpm包
 rpm -qa|grep kube*|xargs rpm --nodeps -e
+```
+
+#### 9.安装harbor
+
+1.下载安装包
+
+```shell
+wget https://github.com/goharbor/harbor/releases/download/v2.5.0-rc3/harbor-offline-installer-v2.5.0-rc3.tgz
+```
+
+2.安装 docker && docker-compose
+
+```shell
+sudo curl -L "https://github.com/docker/compose/releases/download/1.29.2/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
+sudo chmod +x /usr/local/bin/docker-compose
+sudo ln -s /usr/local/bin/docker-compose /usr/bin/docker-compose
+docker-compose --version
+```
+
+3.配置证书
+
+```shell
+#生成证书颁发机构证书
+#1.生成CA证书私钥。
+openssl genrsa -out ca.key 4096
+#2.生成CA证书。
+openssl req -x509 -new -nodes -sha512 -days 3650 \
+ -subj "/C=CN/ST=Beijing/L=Beijing/O=example/OU=Personal/CN=yourdomain.com.cn" \
+ -key ca.key \
+ -out ca.crt
+ 
+#生成服务器证书
+#1.生成私钥。
+openssl genrsa -out secsmart.com.cn.key 4096
+#2.生成证书签名请求 (CSR)。
+openssl req -sha512 -new -subj "/C=CN/ST=ZheJiang/L=HangZhou/O=secsmart/OU=networkdlp/CN=secsmart.com.cn" -key secsmart.com.cn.key -out secsmart.com.cn.csr
+#3.生成一个x509 v3扩展名文件。
+cat > v3.ext <<-EOF
+authorityKeyIdentifier=keyid,issuer
+basicConstraints=CA:FALSE
+keyUsage = digitalSignature, nonRepudiation, keyEncipherment, dataEncipherment
+extendedKeyUsage = serverAuth
+subjectAltName = @alt_names
+
+[alt_names]
+DNS.1=secsmart.com.cn
+DNS.2=secsmart.com
+DNS.3=secsmart
+DNS.4=hostname
+EOF
+#4.使用v3.ext文件为您的Harbor主机生成证书。
+openssl x509 -req -sha512 -days 3650 \
+    -extfile v3.ext \
+    -CA ca.crt -CAkey ca.key -CAcreateserial \
+    -in secsmart.com.cn.csr \
+    -out secsmart.com.cn.crt
+```
+
+4.向Harbor和Docker提供证书
+
+```shell
+#1.将服务器证书和密钥复制到Harbor主机上的certficates文件夹中。
+cp secsmart.com.cn.crt /data/cert/
+cp secsmart.com.cn.key /data/cert/
+#2.将yourdomain.com.crt转换为yourdomain.com.cert，供Docker使用
+openssl x509 -inform PEM -in secsmart.com.cn.crt -out secsmart.com.cn.cert
+#3.将服务器证书、密钥和CA文件复制到Harbor主机上的Docker证书文件夹中。您必须先创建相应的文件夹。
+cp secsmart.com.cn.cert /etc/docker/certs.d/secsmart.com.cn/
+cp secsmart.com.cn.key /etc/docker/certs.d/secsmart.com.cn/
+cp ca.crt /etc/docker/certs.d/secsmart.com.cn/
+#如果您将默认nginx端口443映射到其他端口，请创建文件夹/etc/docker/certs.d/yourdomain.com:port或/etc/docker/certs.d/harbor_IP:port。
+#4.重新启动Docker引擎。
+systemctl restart docker
 ```
 
