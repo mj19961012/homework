@@ -248,7 +248,7 @@ openssl req -x509 -new -nodes -sha512 -days 3650 \
 #1.生成私钥。
 openssl genrsa -out secsmart.com.cn.key 4096
 #2.生成证书签名请求 (CSR)。
-openssl req -sha512 -new -subj "/C=CN/ST=ZheJiang/L=HangZhou/O=secsmart/OU=networkdlp/CN=secsmart.com.cn" -key secsmart.com.cn.key -out secsmart.com.cn.csr
+openssl req -sha512 -new -subj "/C=CN/ST=ZheJiang/L=HangZhou/O=secsmart/OU=networkdlp/CN=reg.secsmart.com.cn" -key secsmart.com.cn.key -out secsmart.com.cn.csr
 #3.生成一个x509 v3扩展名文件。
 cat > v3.ext <<-EOF
 authorityKeyIdentifier=keyid,issuer

@@ -48,11 +48,10 @@ func RootPath(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	w.Header().Set("Server Version", os.Getenv("VERSION"))
-	retcode := 200
-	w.WriteHeader(retcode)
+	w.WriteHeader(http.StatusOK)
 	fmt.Println("Client IP:", r.Host)
-	fmt.Println("Return Code:", retcode)
-
+	fmt.Println("Return Code:", http.StatusOK)
+	w.Write([]byte("Hello World"))
 }
 
 func healthz(w http.ResponseWriter, r *http.Request) {
