@@ -25,7 +25,7 @@ spec:
       restartPolicy: Always
       containers:
         - name: httpserver
-          image: mj19961012/httpserver:v0.3
+          image: mj19961012/httpserver:v0.5
           ports:
             - containerPort: 8090
           readinessProbe:
