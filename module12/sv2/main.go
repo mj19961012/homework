@@ -4,13 +4,12 @@ import (
 	"fmt"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
-	"io"
+	io "io"
 	"log"
 	"math/rand"
 	"net/http"
 	"os"
 	"os/signal"
-	"strings"
 	"syscall"
 	"time"
 )
@@ -104,40 +103,22 @@ func GracefullExit() {
 	os.Exit(0)
 }
 func Index(w http.ResponseWriter, r *http.Request) {
-
-	//for k, v := range r.Header {
-	//	for _, value := range v {
-	//		w.Header().Set(k, value)
-	//	}
-	//}
-	w.Header().Set("Server Version", os.Getenv("VERSION"))
-	w.WriteHeader(http.StatusOK)
-	fmt.Println("Client IP:", r.Host)
-	fmt.Println("Return Code:", http.StatusOK)
 	timer := NewTimer()
 	defer timer.ObserveTotal()
 	randInt := rand.Intn(2000)
 	time.Sleep(time.Millisecond * time.Duration(randInt))
+
+	for k, v := range r.Header {
+		for _, value := range v {
+			w.Header().Set(k, value)
+		}
+	}
+	w.Header().Set("Server Version", os.Getenv("VERSION"))
+	w.WriteHeader(http.StatusOK)
+	fmt.Println("Client IP:", r.Host)
+	fmt.Println("Return Code:", http.StatusOK)
+
 	w.Write([]byte(fmt.Sprintf("<h1>Hello World :%d<h1>", randInt)))
-	req, err := http.NewRequest("GET", "http://service1", nil)
-	if err != nil {
-		fmt.Printf("%s", err)
-	}
-	toSv1Header := make(http.Header)
-	for key, value := range r.Header {
-		toSv1Header[strings.ToLower(key)] = value
-	}
-	req.Header = toSv1Header
-	client := &http.Client{}
-	resp, err := client.Do(req)
-	if err != nil {
-		fmt.Printf("HTTP get failed with error: ", "error", err)
-	} else {
-		fmt.Printf("HTTP get succeeded")
-	}
-	if resp != nil {
-		resp.Write(w)
-	}
 }
 
 func healthz(w http.ResponseWriter, r *http.Request) {

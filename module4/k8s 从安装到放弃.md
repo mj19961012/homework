@@ -288,3 +288,10 @@ cp ca.crt /etc/docker/certs.d/secsmart.com.cn/
 systemctl restart docker
 ```
 
+
+
+
+
+
+
+![ProcessOn -在线绘图_第2张图片](https://img.it610.com/image/info2/d701b26078aa4ea38b088b6d02f50e27.jpg)

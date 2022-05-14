@@ -119,7 +119,7 @@ func Index(w http.ResponseWriter, r *http.Request) {
 	randInt := rand.Intn(2000)
 	time.Sleep(time.Millisecond * time.Duration(randInt))
 	w.Write([]byte(fmt.Sprintf("<h1>Hello World :%d<h1>", randInt)))
-	req, err := http.NewRequest("GET", "http://service1", nil)
+	req, err := http.NewRequest("GET", "http://service2", nil)
 	if err != nil {
 		fmt.Printf("%s", err)
 	}
