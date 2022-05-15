@@ -109,4 +109,4 @@ istioctl dashboard jaeger --address 0.0.0.0
 #浏览器访问
 ```
 
-![image-20220515221549175](C:\Users\Jey\AppData\Roaming\Typora\typora-user-images\image-20220515221549175.png)
+![image-20220515221549175](istio从安装到卸载.assets/image-20220515221549175.png)
