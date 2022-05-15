@@ -110,24 +110,21 @@ func Index(w http.ResponseWriter, r *http.Request) {
 	//		w.Header().Set(k, value)
 	//	}
 	//}
-	w.Header().Set("Server Version", os.Getenv("VERSION"))
-	w.WriteHeader(http.StatusOK)
-	fmt.Println("Client IP:", r.Host)
-	fmt.Println("Return Code:", http.StatusOK)
+
 	timer := NewTimer()
 	defer timer.ObserveTotal()
 	randInt := rand.Intn(2000)
 	time.Sleep(time.Millisecond * time.Duration(randInt))
-	w.Write([]byte(fmt.Sprintf("<h1>Hello World :%d<h1>", randInt)))
+
 	req, err := http.NewRequest("GET", "http://service2", nil)
 	if err != nil {
 		fmt.Printf("%s", err)
 	}
-	toSv1Header := make(http.Header)
+	toSv2Header := make(http.Header)
 	for key, value := range r.Header {
-		toSv1Header[strings.ToLower(key)] = value
+		toSv2Header[strings.ToLower(key)] = value
 	}
-	req.Header = toSv1Header
+	req.Header = toSv2Header
 	client := &http.Client{}
 	resp, err := client.Do(req)
 	if err != nil {
@@ -138,6 +135,11 @@ func Index(w http.ResponseWriter, r *http.Request) {
 	if resp != nil {
 		resp.Write(w)
 	}
+
+	w.Header().Set("Server Version", os.Getenv("VERSION"))
+	w.WriteHeader(http.StatusOK)
+	fmt.Println("Client IP:", r.Host)
+	fmt.Println("Return Code:", http.StatusOK)
 }
 
 func healthz(w http.ResponseWriter, r *http.Request) {
