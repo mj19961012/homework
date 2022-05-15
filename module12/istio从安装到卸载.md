@@ -30,3 +30,11 @@ default           Active        3d      enabled
 kubectl -n default create deployment my-nginx --image=nginx
 ```
 
+> 签发证书
+
+```shell
+openssl req -x509 -sha256 -nodes -days 365 -newkey rsa:2048 -subj '/O=secsmart /CN=*.secsmart.network' -keyout secsmart.network.key -out secsmart.network.crt
+
+kubectl create -n istio-system secret tls wildcard-credential --key=secsmart.network.key --cert=secsmart.network.crt
+```
+

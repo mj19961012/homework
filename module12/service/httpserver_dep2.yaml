@@ -1,14 +1,14 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: httpserver_2
+  name: httpserver-2
   labels:
-    app: httpserver_2
+    app: httpserver-2
 spec:
   replicas: 2
   selector:
     matchLabels:
-      app: httpserver_2
+      app: httpserver-2
   strategy:
     rollingUpdate:
       maxSurge: 25%
@@ -17,7 +17,7 @@ spec:
   template:
     metadata:
       labels:
-        app: httpserver_2
+        app: httpserver-2
       annotations:
         prometheus.io/scrape: "true"
         prometheus.io/port: "8090"

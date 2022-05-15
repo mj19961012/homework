@@ -8,7 +8,7 @@ metadata:
 spec:
   type: NodePort
   selector:
-    app: httpserver_1
+    app: httpserver-1
   ports:
     - protocol: TCP
       port: 80
