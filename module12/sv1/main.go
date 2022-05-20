@@ -116,15 +116,15 @@ func Index(w http.ResponseWriter, r *http.Request) {
 	randInt := rand.Intn(2000)
 	time.Sleep(time.Millisecond * time.Duration(randInt))
 
-	req, err := http.NewRequest("GET", "http://service1", nil)
+	req, err := http.NewRequest("GET", "http://service2", nil)
 	if err != nil {
 		fmt.Printf("%s", err)
 	}
-	toSv1Header := make(http.Header)
+	toSv2Header := make(http.Header)
 	for key, value := range r.Header {
-		toSv1Header[strings.ToLower(key)] = value
+		toSv2Header[strings.ToLower(key)] = value
 	}
-	req.Header = toSv1Header
+	req.Header = toSv2Header
 	client := &http.Client{}
 	resp, err := client.Do(req)
 	if err != nil {
@@ -140,7 +140,6 @@ func Index(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 	fmt.Println("Client IP:", r.Host)
 	fmt.Println("Return Code:", http.StatusOK)
-	w.Write([]byte(fmt.Sprintf("<h1>Hello World :%d<h1>", randInt)))
 }
 
 func healthz(w http.ResponseWriter, r *http.Request) {

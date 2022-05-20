@@ -570,3 +570,5 @@ https://github.com/kubernetes/kubernetes/tree/master/plugin/pkg/admission
 ![image-20220519153311568](k8s 从安装到放弃.assets/image-20220519153311568.png)
 
 ![image-20220519154234937](k8s 从安装到放弃.assets/image-20220519154234937.png)
+=======
+

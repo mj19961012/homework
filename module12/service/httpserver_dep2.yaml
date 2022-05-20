@@ -1,14 +1,14 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: secsmart-httpserver
+  name: httpserver-2
   labels:
-    app: httpserver
+    app: httpserver-2
 spec:
-  replicas: 3
+  replicas: 2
   selector:
     matchLabels:
-      app: httpserver
+      app: httpserver-2
   strategy:
     rollingUpdate:
       maxSurge: 25%
@@ -17,7 +17,7 @@ spec:
   template:
     metadata:
       labels:
-        app: httpserver
+        app: httpserver-2
       annotations:
         prometheus.io/scrape: "true"
         prometheus.io/port: "8090"
@@ -25,7 +25,7 @@ spec:
       restartPolicy: Always
       containers:
         - name: httpserver
-          image: mj19961012/httpserver:v0.5
+          image: mj19961012/httpserver:v0.6.2
           ports:
             - containerPort: 8090
           readinessProbe:

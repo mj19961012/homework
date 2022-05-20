@@ -1,0 +1,16 @@
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: httpserver
+  namespace: default
+spec:
+  gateways:
+    - httpserver-gw
+  hosts:
+    - test.secsmart.network
+  http:
+    - route:
+        - destination:
+            host: httpserver-service.default.svc.cluster.local
+            port:
+              number: 80
