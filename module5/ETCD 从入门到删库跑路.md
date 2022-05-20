@@ -11,10 +11,10 @@ yum -y install nfs-utils
 ```shell
 mkdir -p /nfs/data/
 chmod -R 777 /nfs/data
-vim /etc/exports #添加以下内容 /nfs/data *(rw,no_root_squash,sync)
+vim /etc/exports #添加以下内容 /nfs/data *(rw,sync,all_squash,insecure)
 
 cat /etc/exports
-/nfs/data *(rw,no_root_squash,sync)
+/nfs/data *(rw,sync,all_squash,insecure)
 
 exportfs -r
 systemctl restart rpcbind && systemctl enable rpcbind
@@ -22,7 +22,42 @@ systemctl restart nfs && systemctl enable nfs
 rpcinfo -p localhost
 
 showmount -e
+
+curl -skSL https://raw.githubusercontent.com/kubernetes-csi/csi-driver-nfs/master/deploy/install-driver.sh | bash -s master --
+Installing NFS CSI driver, version: master ...
+serviceaccount/csi-nfs-controller-sa created
+serviceaccount/csi-nfs-node-sa created
+clusterrole.rbac.authorization.k8s.io/nfs-external-provisioner-role created
+clusterrolebinding.rbac.authorization.k8s.io/nfs-csi-provisioner-binding created
+csidriver.storage.k8s.io/nfs.csi.k8s.io unchanged
+deployment.apps/csi-nfs-controller configured
+daemonset.apps/csi-nfs-node configured
+NFS CSI driver installed successfully.
+
+cat nfs-sc.yaml
 ```
+
+```yaml
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: nfs-csi
+provisioner: nfs.csi.k8s.io
+parameters:
+  server: 172.16.49.20
+  share: /home/nfs/data
+reclaimPolicy: Delete
+volumeBindingMode: Immediate
+mountOptions:
+  - hard
+  - nfsvers=4.1
+```
+
+```shell
+kubectl apply -f nfs-sc.yaml 
+```
+
+
 
 #### 3.配置 etcd
 
