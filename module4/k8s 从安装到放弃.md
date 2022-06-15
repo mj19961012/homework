@@ -46,6 +46,7 @@ yum update --allowerasing
 
 ```shell
 yum install -y docker-ce docker-ce-cli containerd.io
+yum install -y docker-ce-20.10.12 docker-ce-cli-20.10.12 containerd.io-19.03.8
 ```
 
 #### 7.安装 k8s
@@ -61,6 +62,10 @@ repo_gpgcheck=0
 gpgkey=https://mirrors.aliyun.com/kubernetes/yum/doc/yum-key.gpg https://mirrors.aliyun.com/kubernetes/yum/doc/rpm-package-key.gpg
 exclude=kubelet kubeadm kubectl
 EOF
+
+
+ k8s 版本:1.18.6
+docker 版本:19.03.8
 
 # 将 SELinux 设置为 permissive 模式（相当于将其禁用）
 setenforce 0
@@ -83,6 +88,7 @@ yum install -y kubelet kubeadm kubectl --disableexcludes=kubernetes
 kubeadm config images list
 
 yum install -y kubelet-1.23.4 kubeadm-1.23.4 kubectl-1.23.4 --disableexcludes=kubernetes
+yum install -y kubelet-1.18.6 kubeadm-1.18.6 kubectl-1.18.6 --disableexcludes=kubernetes
 
 systemctl enable --now kubelet
 #修改 docker cgroup 驱动为systemd
@@ -102,6 +108,21 @@ cat > /etc/docker/daemon.json <<EOF
   "data-root": "/data/docker"
 }
 EOF
+
+cat > /etc/docker/daemon.json <<EOF
+{
+  "exec-opts": ["native.cgroupdriver=systemd"],
+  "log-driver": "json-file",
+  "log-opts": {
+    "max-size": "100m"
+  },
+  "storage-driver": "overlay2",
+  "storage-opts": [
+    "overlay2.override_kernel_check=true"
+  ],
+  "data-root": "/data/docker"
+}
+EOF
 systemctl daemon-reload
 systemctl restart docker
 
@@ -111,6 +132,11 @@ echo '172.16.49.20 k8s-node1' >> /etc/hosts
 echo '172.16.49.21 k8s-node2' >> /etc/hosts
 echo '172.16.53.161 k8s-node3' >> /etc/hosts
 echo '172.16.53.160 reg.secsmart.com.cn' >> /etc/hosts
+
+
+echo '172.16.20.206 k8s-master' >> /etc/hosts
+echo '172.16.20.208 k8s-node1' >> /etc/hosts
+echo '172.16.20.90 k8s-node2' >> /etc/hosts
 systemctl stop firewalld && systemctl disable firewalld
 
 
@@ -120,6 +146,13 @@ kubeadm init \
 --kubernetes-version v1.23.4 \
 --service-cidr=10.1.0.0/16,2000:db8:42:1::/108 \
 --pod-network-cidr=192.168.0.0/16,2001:db8:42:0::/64
+
+kubeadm init \
+--apiserver-advertise-address=172.16.20.206 \
+--image-repository registry.aliyuncs.com/google_containers \
+--kubernetes-version v1.18.6 \
+--service-cidr=10.1.0.0/16 \
+--pod-network-cidr=192.168.0.0/16
 
 kubeadm init --pod-network-cidr=10.244.0.0/16,2001:db8:42:0::/56 --service-cidr=10.96.0.0/16,2001:db8:42:1::/112
 #podnetwork
@@ -172,8 +205,8 @@ error execution phase preflight: couldn't validate the identity of the API Serve
 4lmxeo.ed85xnxdcy44l741
 # openssl x509 -pubkey -in /etc/kubernetes/pki/ca.crt | openssl rsa -pubin -outform der 2>/dev/null | openssl dgst -sha256 -hex | sed 's/^.* //'
 a04299cfdc941c8ccb2377b494b73688a2cbdefc7e1cc57b7a1edd6c87edb815
-kubeadm join 172.16.39.202:6443 --token 4lmxeo.ed85xnxdcy44l741 \
-	--discovery-token-ca-cert-hash sha256:a04299cfdc941c8ccb2377b494b73688a2cbdefc7e1cc57b7a1edd6c87edb815
+kubeadm join 172.16.20.206:6443 --token p03h34.68futgvq4pphkhrq \
+	--discovery-token-ca-cert-hash sha256:cbe28f95c72e3c4e7b99ea7dde37abb44cdbec9642a7fc369383a44878cddc45
 
 
 kubectl label nodes k8s-node1 node-role.kubernetes.io/worker=
@@ -261,10 +294,11 @@ extendedKeyUsage = serverAuth
 subjectAltName = @alt_names
 
 [alt_names]
-DNS.1=secsmart.com.cn
-DNS.2=secsmart.com
-DNS.3=secsmart
-DNS.4=hostname
+DNS.1=reg.secsmart.com.cn
+DNS.2=secsmart.com.cn
+DNS.3=secsmart.com
+DNS.4=secsmart
+DNS.5=hostname
 EOF
 #4.使用v3.ext文件为您的Harbor主机生成证书。
 openssl x509 -req -sha512 -days 3650 \
@@ -290,6 +324,205 @@ cp ca.crt /etc/docker/certs.d/secsmart.com.cn/
 #4.重新启动Docker引擎。
 systemctl restart docker
 ```
+
+#### 10.MetalLB
+
+MetalLB 是裸机 Kubernetes 集群的负载均衡器实现，使用标准路由协议。
+
+Kubernetes 官方并没有提供 *LoadBalancer* 的实现。各家云厂商有提供实现，但假如不是运行在这些云环境上，创建的 *LoadBalancer* Service 会一直处于 *Pending* 状态（见下文 Demo 部分）。
+
+MetalLB 提供了两个功能：
+
+- 地址分配：当创建 *LoadBalancer* Service 时，MetalLB 会为其分配 IP 地址。这个 IP 地址是从**预先配置的 IP 地址库**获取的。同样，当 Service 删除后，已分配的 IP 地址会重新回到地址库。
+- 对外广播：分配了 IP 地址之后，需要让集群外的网络知道这个地址的存在。MetalLB 使用了标准路由协议实现：ARP、NDP 或者 BGP。
+
+广播的方式有两种，第一种是 Layer 2 模式，使用 ARP（ipv4）/NDP（ipv6） 协议；第二种是 BPG。
+
+今天主要介绍简单的 Layer 2 模式，顾名思义是 OSI 二层的实现。
+
+```shell
+kubectl apply -f https://raw.githubusercontent.com/metallb/metallb/v0.12.1/manifests/namespace.yaml
+kubectl apply -f https://raw.githubusercontent.com/metallb/metallb/v0.12.1/manifests/metallb.yaml
+```
+
+因为，MetalLB 要为 Service 分配 IP 地址，但 IP 地址不是凭空来的，而是需要预先提供一个地址库。
+
+这里我们使用 *Layer 2* 模式，通过 *Configmap* 为其提供一个 IP 段：
+
+```shell
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  namespace: metallb-system
+  name: config
+data:
+  config: |
+    address-pools:
+    - name: default
+      protocol: layer2
+      addresses:
+      - 192.168.1.30-192.168.1.49
+```
+
+记录一次MetalLB遇到的问题
+
+```shell
+[root@k8s-master jey]# kubectl get nodes 
+NAME         STATUS   ROLES    AGE    VERSION
+k8s-master   Ready    master   13d    v1.18.6
+k8s-node1    Ready    worker   13d    v1.18.6
+k8s-node2    Ready    worker   7h1m   v1.18.6
+```
+
+集群信息如上
+
+```shell
+[root@k8s-master cxl]# kubectl get svc -A
+NAMESPACE     NAME           TYPE           CLUSTER-IP     EXTERNAL-IP   PORT(S)                  AGE
+default       kubernetes     ClusterIP      10.1.0.1       <none>        443/TCP                  13d
+kube-system   kube-dns       ClusterIP      10.1.0.10      <none>        53/UDP,53/TCP,9153/TCP   13d
+secsmart      backend-svc    ClusterIP      10.1.194.237   <none>        8443/TCP                 15h
+secsmart      frontend-svc   LoadBalancer   10.1.171.220   <pending>     443:31613/TCP            14h
+secsmart      maildlp-svc    NodePort       10.1.135.109   <none>        40101:32766/TCP          28m
+```
+
+部署之后LoadBalancer一直处于pending状态
+
+查看MetalLB日志
+
+```shell
+[root@k8s-master cxl]# kubectl logs -n metallb-system speaker-j89zp 
+{"branch":"HEAD","caller":"level.go:63","commit":"v0.12.1","goversion":"gc / go1.16.14 / amd64","level":"info","msg":"MetalLB speaker starting version 0.12.1 (commit v0.12.1, branch HEAD)","ts":"2022-06-15T03:36:34.104174412Z","version":"0.12.1"}
+{"caller":"level.go:63","event":"createARPResponder","interface":"ens32","level":"info","msg":"created ARP responder for interface","ts":"2022-06-15T03:36:34.10767918Z"}
+{"caller":"level.go:63","event":"createNDPResponder","interface":"ens32","level":"info","msg":"created NDP responder for interface","ts":"2022-06-15T03:36:34.108377819Z"}
+{"caller":"level.go:63","event":"createARPResponder","interface":"docker0","level":"info","msg":"created ARP responder for interface","ts":"2022-06-15T03:36:34.10886066Z"}
+{"caller":"level.go:63","event":"createARPResponder","interface":"cali5beacbfb753","level":"info","msg":"created ARP responder for interface","ts":"2022-06-15T03:36:34.109554556Z"}
+{"caller":"level.go:63","event":"createNDPResponder","interface":"cali5beacbfb753","level":"info","msg":"created NDP responder for interface","ts":"2022-06-15T03:36:34.109789563Z"}
+{"caller":"level.go:63","event":"createARPResponder","interface":"cali6e9769af5bd","level":"info","msg":"created ARP responder for interface","ts":"2022-06-15T03:36:34.110201938Z"}
+{"caller":"level.go:63","event":"createNDPResponder","interface":"cali6e9769af5bd","level":"info","msg":"created NDP responder for interface","ts":"2022-06-15T03:36:34.110421713Z"}
+{"caller":"level.go:63","event":"createARPResponder","interface":"cali47ba59bc029","level":"info","msg":"created ARP responder for interface","ts":"2022-06-15T03:36:34.110785623Z"}
+{"caller":"level.go:63","event":"createNDPResponder","interface":"cali47ba59bc029","level":"info","msg":"created NDP responder for interface","ts":"2022-06-15T03:36:34.110948889Z"}
+{"caller":"level.go:63","event":"createARPResponder","interface":"cali3dc0e4db2a8","level":"info","msg":"created ARP responder for interface","ts":"2022-06-15T03:36:34.111264819Z"}
+{"caller":"level.go:63","event":"createNDPResponder","interface":"cali3dc0e4db2a8","level":"info","msg":"created NDP responder for interface","ts":"2022-06-15T03:36:34.111425338Z"}
+{"caller":"level.go:63","event":"createARPResponder","interface":"calid7fad46af31","level":"info","msg":"created ARP responder for interface","ts":"2022-06-15T03:36:34.11178849Z"}
+{"caller":"level.go:63","event":"createNDPResponder","interface":"calid7fad46af31","level":"info","msg":"created NDP responder for interface","ts":"2022-06-15T03:36:34.111986873Z"}
+{"caller":"level.go:63","level":"info","msg":"using endpoint slices","op":"New","ts":"2022-06-15T03:36:34.1228226Z"}
+{"caller":"level.go:63","level":"info","msg":"node event - forcing sync","node addr":"172.16.20.207","node event":"NodeJoin","node name":"k8s-node2","ts":"2022-06-15T03:36:34.138144233Z"}
+{"caller":"level.go:63","configmap":"metallb-system/config","event":"configLoaded","level":"info","msg":"config (re)loaded","ts":"2022-06-15T03:36:34.237405631Z"}
+{"caller":"level.go:63","event":"nodeLabelsChanged","level":"info","msg":"Node labels changed, resyncing BGP peers","ts":"2022-06-15T03:36:34.237540624Z"}
+{"caller":"level.go:63","level":"info","msg":"triggering discovery","op":"memberDiscovery","ts":"2022-06-15T03:36:34.23755957Z"}
+{"caller":"level.go:63","level":"info","msg":"node event - forcing sync","node addr":"172.16.20.208","node event":"NodeJoin","node name":"k8s-node1","ts":"2022-06-15T03:36:34.239577894Z"}
+{"caller":"level.go:63","level":"info","msg":"node event - forcing sync","node addr":"172.16.20.206","node event":"NodeJoin","node name":"k8s-master","ts":"2022-06-15T03:36:34.239637215Z"}
+{"caller":"level.go:63","level":"info","msg":"memberlist join succesfully","number of other nodes":2,"op":"Member detection","ts":"2022-06-15T03:36:34.241384323Z"}
+{"caller":"level.go:63","level":"info","msg":"triggering discovery","op":"memberDiscovery","ts":"2022-06-15T03:37:19.283015147Z"}
+{"caller":"level.go:63","configmap":"metallb-system/config","error":"no MetalLB configuration in cluster","level":"error","msg":"configuration is missing, MetalLB will not function","op":"setConfig","ts":"2022-06-15T03:38:49.72858703Z"}
+{"caller":"level.go:63","event":"createARPResponder","interface":"cali5eeb87d1bbe","level":"info","msg":"created ARP responder for interface","ts":"2022-06-15T03:39:34.171279388Z"}
+{"caller":"level.go:63","event":"createNDPResponder","interface":"cali5eeb87d1bbe","level":"info","msg":"created NDP responder for interface","ts":"2022-06-15T03:39:34.171591777Z"}
+{"caller":"level.go:63","event":"deleteARPResponder","interface":"cali6e9769af5bd","level":"info","msg":"deleted ARP responder for interface","ts":"2022-06-15T03:39:34.177724093Z"}
+{"caller":"level.go:63","event":"deleteNDPResponder","interface":"cali6e9769af5bd","level":"info","msg":"deleted NDP responder for interface","ts":"2022-06-15T03:39:34.177810215Z"}
+{"caller":"level.go:63","level":"info","msg":"triggering discovery","op":"memberDiscovery","ts":"2022-06-15T03:42:20.434572609Z"}
+{"caller":"level.go:63","configmap":"metallb-system/config","event":"configLoaded","level":"info","msg":"config (re)loaded","ts":"2022-06-15T03:43:07.314541852Z"}
+{"caller":"level.go:63","level":"info","msg":"triggering discovery","op":"memberDiscovery","ts":"2022-06-15T03:47:21.598930805Z"}
+{"caller":"level.go:63","level":"info","msg":"triggering discovery","op":"memberDiscovery","ts":"2022-06-15T03:52:22.7661064Z"}
+{"caller":"level.go:63","level":"info","msg":"triggering discovery","op":"memberDiscovery","ts":"2022-06-15T03:57:23.903811775Z"}
+{"caller":"level.go:63","level":"info","msg":"triggering discovery","op":"memberDiscovery","ts":"2022-06-15T04:02:25.123505966Z"}
+{"caller":"level.go:63","configmap":"metallb-system/config","event":"configLoaded","level":"info","msg":"config (re)loaded","ts":"2022-06-15T04:05:33.293008225Z"}
+{"caller":"level.go:63","configmap":"metallb-system/config","error":"no MetalLB configuration in cluster","level":"error","msg":"configuration is missing, MetalLB will not function","op":"setConfig","ts":"2022-06-15T04:06:21.661106936Z"}
+{"caller":"level.go:63","configmap":"metallb-system/config","event":"configLoaded","level":"info","msg":"config (re)loaded","ts":"2022-06-15T04:06:30.2668535Z"}
+{"caller":"level.go:63","level":"info","msg":"triggering discovery","op":"memberDiscovery","ts":"2022-06-15T04:07:26.255188787Z"}
+#先看speaker的 log 发现没有ARP 通告
+#所以查看controller日志
+[root@k8s-master cxl]# kubectl logs -n metallb-system controller-777754df96-2fbkf 
+{"branch":"HEAD","caller":"level.go:63","commit":"v0.12.1","goversion":"gc / go1.16.14 / amd64","level":"info","msg":"MetalLB controller starting version 0.12.1 (commit v0.12.1, branch HEAD)","ts":"2022-06-15T03:36:18.813050827Z","version":"0.12.1"}
+{"caller":"level.go:63","level":"info","msg":"secret succesfully created","op":"CreateMlSecret","ts":"2022-06-15T03:36:18.852711895Z"}
+{"caller":"level.go:63","event":"stateSynced","level":"info","msg":"controller synced, can allocate IPs now","ts":"2022-06-15T03:36:18.953205783Z"}
+{"caller":"level.go:63","configmap":"metallb-system/config","event":"configLoaded","level":"info","msg":"config (re)loaded","ts":"2022-06-15T03:36:29.074461891Z"}
+{"caller":"level.go:63","event":"clearAssignment","level":"info","msg":"No ClusterIPs","reason":"noClusterIPs","service":"secsmart/frontend-svc","ts":"2022-06-15T03:36:29.080297394Z"}
+{"caller":"level.go:63","configmap":"metallb-system/config","error":"no MetalLB configuration in cluster","level":"error","msg":"configuration is missing, MetalLB will not function","op":"setConfig","ts":"2022-06-15T03:38:49.727956817Z"}
+{"caller":"level.go:63","configmap":"metallb-system/config","event":"configLoaded","level":"info","msg":"config (re)loaded","ts":"2022-06-15T03:43:07.314748058Z"}
+{"caller":"level.go:63","event":"clearAssignment","level":"info","msg":"No ClusterIPs","reason":"noClusterIPs","service":"secsmart/frontend-svc","ts":"2022-06-15T03:43:07.32056928Z"}
+{"caller":"level.go:63","configmap":"metallb-system/config","event":"configLoaded","level":"info","msg":"config (re)loaded","ts":"2022-06-15T04:05:33.293284041Z"}
+{"caller":"level.go:63","event":"clearAssignment","level":"info","msg":"No ClusterIPs","reason":"noClusterIPs","service":"secsmart/frontend-svc","ts":"2022-06-15T04:05:33.298867901Z"}
+{"caller":"level.go:63","configmap":"metallb-system/config","error":"no MetalLB configuration in cluster","level":"error","msg":"configuration is missing, MetalLB will not function","op":"setConfig","ts":"2022-06-15T04:06:21.661097885Z"}
+{"caller":"level.go:63","configmap":"metallb-system/config","event":"configLoaded","level":"info","msg":"config (re)loaded","ts":"2022-06-15T04:06:30.266542043Z"}
+{"caller":"level.go:63","event":"clearAssignment","level":"info","msg":"No ClusterIPs","reason":"noClusterIPs","service":"secsmart/frontend-svc","ts":"2022-06-15T04:06:30.272061499Z"}
+{"caller":"level.go:63","event":"clearAssignment","level":"info","msg":"No ClusterIPs","reason":"noClusterIPs","service":"secsmart/frontend-svc","ts":"2022-06-15T04:07:59.406766066Z"}
+```
+
+发现有错误信息打印,度娘问了半天没有什么实质性进展,然后去翻代码,发现了一些端倪
+
+![image-20220615161413289](k8s 从安装到放弃.assets/image-20220615161413289-5280858.png)
+
+发现它最新的代码同时会校验clusterIPs和clusterIP字段
+
+然后就去查看service
+
+```shell
+apiVersion: v1
+kind: Service
+metadata:
+  annotations:
+  ...
+  clusterIP: 10.1.171.220
+  externalTrafficPolicy: Cluster
+  loadBalancerIP: 172.16.20.3
+  ports:
+  - name: web
+    nodePort: 31613
+    port: 443
+    protocol: TCP
+    targetPort: 443
+  selector:
+    app: frontend
+  sessionAffinity: None
+  type: LoadBalancer
+status:
+  loadBalancer: {}
+```
+
+发现只有clusterIP并没有clusterIPs字段
+
+尝试手动添加clusterIPs字段
+
+![image-20220615161835488](k8s 从安装到放弃.assets/image-20220615161835488-5281117.png)
+
+直接报错  !!!
+
+基本确定了是因为 k8s 版本太老导致与MetalLB不兼容,然后继续翻MetalLB代码
+
+![image-20220615162027465](k8s 从安装到放弃.assets/image-20220615162027465-5281229.png)
+
+发现是controller/service.go   在 2021-11-25 的一次提交里改了这里
+
+所以就去找2021-11-25之前的版本,v0.11.1
+
+```shell
+kubectl apply -f https://raw.githubusercontent.com/metallb/metallb/v0.11.0/manifests/namespace.yaml
+kubectl apply -f https://raw.githubusercontent.com/metallb/metallb/v0.11.0/manifests/metallb.yaml
+```
+
+```shell
+[root@k8s-master jey]# kubectl get pod -n metallb-system -o wide
+NAME                          READY   STATUS    RESTARTS   AGE   IP                NODE         NOMINATED NODE   READINESS GATES
+controller-56c7546946-qzlbb   1/1     Running   0          49s   192.168.169.*   k8s-node2    <none>           <none>
+speaker-9wm9c                 1/1     Running   0          49s   172.16.20.*     k8s-node2    <none>           <none>
+speaker-bn8kx                 1/1     Running   0          49s   172.16.20.*     k8s-node1    <none>           <none>
+speaker-fg9v9                 1/1     Running   0          49s   172.16.20.*     k8s-master   <none>           <none>
+```
+
+都起来之后
+
+```shell
+[root@k8s-master jey]# kubectl get svc -A
+NAMESPACE     NAME           TYPE           CLUSTER-IP     EXTERNAL-IP   PORT(S)                  AGE
+default       kubernetes     ClusterIP      10.1.0.1       <none>        443/TCP                  13d
+kube-system   kube-dns       ClusterIP      10.1.0.10      <none>        53/UDP,53/TCP,9153/TCP   13d
+secsmart      backend-svc    ClusterIP      10.1.194.237   <none>        8443/TCP                 19h
+secsmart      frontend-svc   LoadBalancer   10.1.171.220   172.16.20.3   443:31613/TCP            18h
+secsmart      maildlp-svc    NodePort       10.1.135.109   <none>        40101:32525/TCP          4h6m
+```
+
+LoadBalancer也正常了.
 
 ### kubernetes基础
 
